@@ -33,7 +33,6 @@ Page [参考文档：](https://docs.github.com/zh/pages/configuring-a-custom-dom
 - 提示验证成功即可
   - ![alt text](/assets/image/domainVerified.png){:width="70%"}
 
-![alt text](image.png)
 ### 设置正确可解析的 DNS
 
 Ipv4 相关 DNS
