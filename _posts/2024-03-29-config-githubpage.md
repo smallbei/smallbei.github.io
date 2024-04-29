@@ -6,6 +6,68 @@ tags: jekyll DNS配置 工具
 category: 
 ---
 
+## 环境配置 jekyll
+
+### homebrew 安装
+
+官网：
+
+![icon](https://brew.sh/assets/img/homebrew.svg){:w='4%'} [Homebrew](https://brew.sh/zh-cn/)
+
+安装 HomeBrew
+
+```
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+提示成功后 ⚠️ 注意 iterm2 ｜ 终端 提示文案 执行下面两行
+```
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"') >> /Users/youMacName/.zprofile
+eval "$(/opt/homebrew/bin/brew shellenv)"
+```
+
+### rvm & ruby 安装
+安装 rvm
+```
+ \curl -sSL https://get.rvm.io | bash -s stable
+```
+执行 `rvm -v` 查看是否按转过成功
+
+使用 `rvm list` ｜ `rvm list known` 查看本地 或者远端有哪些 `ruby` 版本
+```ruby
+ * ruby-3.0.0 [ arm64 ]
+
+# => - current
+# =* - current && default
+#  * - default
+```
+
+```ruby
+# MRI Rubies
+[ruby-]1.8.6[-p420]
+[ruby-]1.8.7[-head] # security released on head
+[ruby-]1.9.1[-p431]
+[ruby-]1.9.2[-p330]
+[ruby-]1.9.3[-p551]
+[ruby-]2.0.0[-p648]
+[ruby-]2.1[.10]
+[ruby-]2.2[.10]
+[ruby-]2.3[.8]
+[ruby-]2.4[.10]
+[ruby-]2.5[.8]
+[ruby-]2.6[.6]
+[ruby-]2.7[.2]
+[ruby-]3[.0.0]
+ruby-head
+```
+以 `ruby-3.0.0` 为例：`rvm install 3.0.0`。如果本地存在多分 可以使用 `rvm use 3.0.0` 来使用 `3.0` 版本
+
+### jekyll & jekyll-theme-chirpy
+
+
+
+
+
 ## 配置 GitHub Pages 站点的自定义域
 验证 [参考文档：](https://docs.github.com/zh/pages/configuring-a-custom-domain-for-your-github-pages-site/verifying-your-custom-domain-for-github-pages)
 Page [参考文档：](https://docs.github.com/zh/pages/configuring-a-custom-domain-for-your-github-pages-site/about-custom-domains-and-github-pages)
