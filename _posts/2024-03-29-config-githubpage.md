@@ -6,13 +6,11 @@ tags: jekyll DNS配置 工具
 category: 
 ---
 
-## 环境配置 jekyll
+## 环境配置 [jekyll](https://jekyllrb.com/)
+![](https://jekyllcn.com/img/logo-2x.png)
 
-### homebrew 安装
 
-官网：
-
-![icon](https://brew.sh/assets/img/homebrew.svg){:w='4%'} [Homebrew](https://brew.sh/zh-cn/)
+### 安装 [Homebrew](https://brew.sh/zh-cn/) 
 
 安装 HomeBrew
 
