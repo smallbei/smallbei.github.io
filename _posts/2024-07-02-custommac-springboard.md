@@ -25,6 +25,8 @@ defaults write com.apple.dock springboard-rows -int 6
 defaults write com.apple.dock ResetLaunchPad -bool true;killall Dock
 ```
 
+![alt text](/assets/image/custommac-springboard.png)
+
 ### 恢复默认设置
 
 ```
