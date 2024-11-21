@@ -1,6 +1,6 @@
 ---
 layout: post
-title: "【LeetCode】14.最长公共前缀"
+title: "14.最长公共前缀"
 date: 2024-11-13
 tags: "算法 数组 字符串 LeetCode"
 category: 

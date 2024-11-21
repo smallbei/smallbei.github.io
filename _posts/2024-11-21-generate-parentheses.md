@@ -1,6 +1,6 @@
 ---
 layout: post
-title: "括号生成"
+title: "22.括号生成"
 date: 2024-11-21
 tags: "算法 数组 字符串 LeetCode"
 category: 
