@@ -752,41 +752,69 @@ A → B → C → C → E → D
 ## 五、被围绕的区域（[LeetCode 130](https://leetcode.cn/problems/surrounded-regions/)）
 
 ### 问题描述
-给定一个二维的矩阵，包含 'X' 和 'O'（字母 O）。找到所有被 'X' 围绕的区域，并将这些区域里所有的 'O' 用 'X' 填充。
+给定一个二维矩阵，包含 'X' 和 'O'（字母 O）。找到所有被 'X' 围绕的区域，并将这些区域里所有的 'O' 用 'X' 填充。被围绕的区域是指不与边界相连的 'O' 区域。
 
-### 解题思路
-1. 从边界开始，标记所有与边界相连的'O'
-2. 遍历整个矩阵：
-   - 将未被标记的'O'变成'X'（这些是被围绕的）
-   - 将标记过的'O'恢复（这些是与边界相连的）
+### 思考过程
+1. **问题分析**
+   - 需要找到所有被'X'完全包围的'O'区域
+   - 边界上的'O'及其相连的'O'不会被填充
+   - 只有完全被'X'包围的'O'才需要变成'X'
+   - 关键是识别哪些'O'是与边界相连的
+
+2. **解题思路反转**
+   - 不是直接找被围绕的区域
+   - 而是找到所有不会被围绕的区域（与边界相连的'O'）
+   - 步骤：
+     1. 从边界的'O'开始DFS标记所有相连的'O'
+     2. 剩下的'O'就是被围绕的区域
+     3. 将未被标记的'O'变成'X'
+     4. 恢复被标记的'O'
+
+3. **关键点**
+   - 为什么从边界开始？
+     * 任何与边界相连的'O'都不会被围绕
+     * 这样可以一次性标记所有"安全"的'O'
+   - 如何标记已访问？
+     * 可以使用特殊字符（如'#'）临时标记
+     * 最后再恢复这些标记
+   - 边界处理：
+     * 需要遍历矩阵的四条边
+     * 对每个边界上的'O'进行DFS
+
+4. **代码设计**
+   - 主函数：处理边界和转换
+   - DFS函数：标记相连的'O'
+   - 使用方向数组简化遍历
+   - 分三个阶段：标记、转换、恢复
 
 ### 代码实现
 ```swift
 class Solution {
     func solve(_ board: inout [[Character]]) {
+        // 处理空矩阵或单行/列矩阵
         guard !board.isEmpty && !board[0].isEmpty else { return }
         
         let rows = board.count
         let cols = board[0].count
         
-        // 标记与边界相连的'O'
+        // 第一阶段：标记与边界相连的'O'
         // 检查第一行和最后一行
         for j in 0..<cols {
-            dfs(&board, 0, j)
-            dfs(&board, rows-1, j)
+            dfs(&board, 0, j)      // 第一行
+            dfs(&board, rows-1, j) // 最后一行
         }
         
         // 检查第一列和最后一列
         for i in 0..<rows {
-            dfs(&board, i, 0)
-            dfs(&board, i, cols-1)
+            dfs(&board, i, 0)      // 第一列
+            dfs(&board, i, cols-1) // 最后列
         }
         
-        // 处理整个矩阵
+        // 第二阶段：处理整个矩阵
         for i in 0..<rows {
             for j in 0..<cols {
                 if board[i][j] == "O" {
-                    // 被围绕的'O'变成'X'
+                    // 未标记的'O'是被围绕的，变成'X'
                     board[i][j] = "X"
                 } else if board[i][j] == "#" {
                     // 恢复标记过的'O'
@@ -797,55 +825,170 @@ class Solution {
     }
     
     private func dfs(_ board: inout [[Character]], _ i: Int, _ j: Int) {
-        // 边界检查
+        // 边界检查和'O'检查
         guard i >= 0 && i < board.count &&
               j >= 0 && j < board[0].count &&
               board[i][j] == "O" else { return }
         
-        // 标记当前'O'
+        // 标记当前'O'为已访问
         board[i][j] = "#"
         
-        // 递归标记相邻的'O'
-        dfs(&board, i+1, j)
-        dfs(&board, i-1, j)
-        dfs(&board, i, j+1)
-        dfs(&board, i, j-1)
+        // 递归标记四个方向的相邻'O'
+        dfs(&board, i+1, j) // 下
+        dfs(&board, i-1, j) // 上
+        dfs(&board, i, j+1) // 右
+        dfs(&board, i, j-1) // 左
     }
 }
+```
 
-// 使用示例
-/*
-输入:
+### 执行过程分析
+以下面的矩阵为例：
+```
 X X X X
 X O O X
 X X O X
 X O X X
+```
 
-输出:
-X X X X
-X X X X
-X X X X
+1. **边界检查和标记阶段**
+```
+第一步：检查边界上的'O'
+X X X X    没有边界'O'，不需要标记
+X O O X
+X X O X
 X O X X
 
-解释：
-被围绕的区域被标记为X
-边界上的O及其相连的O保持不变
-*/
+第二步：所有未标记的'O'都是被围绕的
+```
+
+2. **转换阶段**
+```
+原始矩阵：    转换后：
+X X X X      X X X X
+X O O X  →   X X X X
+X X O X      X X X X
+X O X X      X O X X
+
+说明：
+- 除了(3,1)位置的'O'外，其他'O'都被围绕
+- (3,1)的'O'与边界相连，所以保持不变
+```
+
+3. **特殊情况示例**
+```
+特殊情况1：边界相连
+X O X    →    X O X
+O X X         O X X
+X X X         X X X
+（边界'O'保持不变）
+
+特殊情况2：连通区域
+X O O    →    X O O
+X O X         X O X
+X X X         X X X
+（与边界相连的'O'都保持不变）
 ```
 
 ### 复杂度分析
-- 时间复杂度：O(M × N)，其中M和N是矩阵的维度
-- 空间复杂度：O(M × N)，最坏情况下的递归栈深度
+1. **时间复杂度**：O(M × N)
+   - M和N是矩阵的维度
+   - 每个格子最多被访问一次
+   - DFS的递归调用不会增加总的访问次数
+
+2. **空间复杂度**：O(M × N)
+   - 最坏情况下的递归栈深度
+   - 发生在整个矩阵都是'O'的情况
+
+### 优化思路
+1. **使用队列的BFS版本**
+   ```swift
+   func solve(_ board: inout [[Character]]) {
+       let rows = board.count
+       let cols = board[0].count
+       var queue: [(Int, Int)] = []
+       
+       // 收集边界上的'O'
+       for i in 0..<rows {
+           if board[i][0] == "O" { queue.append((i, 0)) }
+           if board[i][cols-1] == "O" { queue.append((i, cols-1)) }
+       }
+       // ... BFS处理
+   }
+   ```
+
+2. **并查集解法**
+   ```swift
+   class UnionFind {
+       private var parent: [Int]
+       private var rank: [Int]
+       
+       init(_ size: Int) {
+           parent = Array(0..<size)
+           rank = Array(repeating: 0, count: size)
+       }
+       
+       func find(_ x: Int) -> Int {
+           if parent[x] != x {
+               parent[x] = find(parent[x])
+           }
+           return parent[x]
+       }
+       
+       func union(_ x: Int, _ y: Int) {
+           let rootX = find(x)
+           let rootY = find(y)
+           if rootX != rootY {
+               if rank[rootX] < rank[rootY] {
+                   parent[rootX] = rootY
+               } else if rank[rootX] > rank[rootY] {
+                   parent[rootY] = rootX
+               } else {
+                   parent[rootY] = rootX
+                   rank[rootX] += 1
+               }
+           }
+       }
+   }
+   ```
+
+3. **原地标记优化**
+   ```swift
+   // 使用位运算标记，避免使用额外字符
+   func solve(_ board: inout [[Character]]) {
+       // 使用ASCII值进行标记
+       let MARKED = Character(UnicodeScalar("O").value + 128)
+       // ... 其余逻辑
+   }
+   ```
+
+### 常见错误
+1. **方向处理不当**
+   - 错误：遗漏某个方向的检查
+   - 正确：使用方向数组确保四个方向都被检查
+
+2. **边界处理不完整**
+   - 错误：只检查部分边界
+   - 正确：检查所有边界位置的'O'
+
+3. **标记恢复问题**
+   - 错误：忘记恢复临时标记
+   - 正确：确保所有标记都被正确恢复
+
+### 相关题目推荐
+1. 岛屿数量（[LeetCode 200](https://leetcode.cn/problems/number-of-islands/)）
+2. 封闭岛屿的数目（[LeetCode 1254](https://leetcode.cn/problems/number-of-closed-islands/)）
+3. 飞地的数量（[LeetCode 1020](https://leetcode.cn/problems/number-of-enclaves/)）
 
 ## 总结
 
 这五个经典的DFS问题展示了不同类型的DFS应用：
 
-1. **岛屿数量（[#200](https://leetcode.cn/problems/number-of-islands/)）**：展示了在网格中使用DFS进行连通区域标记
-2. **路径总和（[#112](https://leetcode.cn/problems/path-sum/)）**：展示了在树中使用DFS进行路径搜索
-3. **全排列（[#46](https://leetcode.cn/problems/permutations/)）**：展示了使用DFS进行排列组合
-4. **单词搜索（[#79](https://leetcode.cn/problems/word-search/)）**：展示了在网格中使用DFS进行路径查找
-5. **被围绕的区域（[#130](https://leetcode.cn/problems/surrounded-regions/)）**：展示了使用DFS处理边界条件
+1. **岛屿数量**：展示了在网格中使用DFS进行连通区域标记
+2. **路径总和**：展示了在树中使用DFS进行路径搜索
+3. **全排列**：展示了使用DFS进行排列组合
+4. **单词搜索**：展示了在网格中使用DFS进行路径查找
+5. **被围绕的区域**：展示了使用DFS处理边界条件
 
 ### 解题技巧
 1. 在网格类问题中，通常需要：
@@ -869,8 +1012,8 @@ X O X X
 3. 提前剪枝优化搜索
 4. 使用方向数组简化代码
 
-希望这些详细的题解能帮助你更好地理解和掌握DFS算法的应用。记住，解决DFS问题的关键是：
-1. 明确递归终止条件
-2. 处理好当前层级的逻辑
-3. 正确实现回溯
-4. 注意边界情况的处理 
+### DFS的核心要素
+1. **状态定义**：明确每个状态代表什么
+2. **终止条件**：何时停止递归
+3. **状态转移**：如何从当前状态到下一状态
+4. **回溯处理**：如何撤销选择，返回上一状态
