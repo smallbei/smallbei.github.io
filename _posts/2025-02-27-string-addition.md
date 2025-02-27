@@ -194,25 +194,78 @@ func addBinary(_ a: String, _ b: String) -> String {
     return result
 }
 
-// 优化版本：使用位运算
+// 优化版本：使用位运算 -- 可以忽略不计 不好理解
 func addBinaryOptimized(_ a: String, _ b: String) -> String {
-    // 将二进制字符串转换为整数
-    let num1 = Int(a, radix: 2) ?? 0
-    let num2 = Int(b, radix: 2) ?? 0
+    // 将二进制字符串转换为字符数组
+    let chars1 = Array(a)
+    let chars2 = Array(b)
+    let n1 = chars1.count
+    let n2 = chars2.count
+    let maxLen = max(n1, n2)
     
-    // 使用位运算进行加法
-    var sum = num1
-    var carry = num2
+    // 使用数组存储每一位的结果，避免字符串拼接
+    var result = Array(repeating: "0", count: maxLen + 1)
+    var carry = 0
     
-    while carry != 0 {
-        let temp = sum
-        sum = sum ^ carry // 异或运算得到不带进位的和
-        carry = (temp & carry) << 1 // 与运算后左移得到进位
+    // 从低位到高位处理
+    for i in 0..<maxLen {
+        // 使用位运算获取当前位
+        let p1 = n1 - 1 - i
+        let p2 = n2 - 1 - i
+        
+        // 使用位运算计算当前位的值
+        let bit1 = p1 >= 0 ? chars1[p1] == "1" ? 1 : 0 : 0
+        let bit2 = p2 >= 0 ? chars2[p2] == "1" ? 1 : 0 : 0
+        
+        // 使用异或运算计算当前位
+        let sum = bit1 ^ bit2 ^ carry
+        
+        // 使用与运算计算进位
+        // carry = 1 当且仅当至少有两个1
+        carry = (bit1 & bit2) | (bit1 & carry) | (bit2 & carry)
+        
+        // 从低位开始填充结果
+        result[maxLen - i] = String(sum)
     }
     
-    // 转回二进制字符串
-    return String(sum, radix: 2)
+    // 处理最高位的进位
+    if carry > 0 {
+        result[0] = "1"
+        return result.joined()
+    }
+    
+    // 去除前导零
+    return result[1...].joined()
 }
+
+// 添加测试用例和解释
+/*
+位运算优化说明：
+1. 异或运算(^)：计算不带进位的和
+    0 ^ 0 = 0
+    0 ^ 1 = 1
+    1 ^ 0 = 1
+    1 ^ 1 = 0
+
+2. 与运算(&)：计算进位
+    当有两个或以上的1时产生进位
+    可以用 (a & b) | (a & c) | (b & c) 判断
+
+3. 性能优化：
+    - 避免字符串拼接操作
+    - 使用位运算代替算术运算
+    - 预分配结果数组空间
+
+测试用例：
+a = "10100000100100110110010000010101111011011001101110111111111101000000101111001110001111100001101"
+b = "110101001011101110001111100110001010100001101011101010000011011011001011101111001100000011011110011"
+
+解释：
+1. 预分配长度为max(len(a), len(b)) + 1的结果数组
+2. 从低位到高位，使用位运算处理每一位
+3. 使用异或运算计算当前位的值
+4. 使用与运算计算进位
+*/
 ```
 
 ### 3. 复数字符串运算
