@@ -211,6 +211,7 @@ func partition<T: Comparable>(_ array: inout [T], low: Int, high: Int, pivot: T)
 ```
 
 **性能对比**：
+
 | 数组大小 | 普通快排 | 优化快排 |
 |---------|---------|---------|
 | 5       | 0.005ms | 0.002ms |
@@ -1764,7 +1765,3 @@ class Solution {
 1. **整数溢出**：计算mid*mid时可能会溢出，应使用除法代替
 2. **边界条件**：处理x=0和x=1的特殊情况
 3. **返回值**：返回right而不是left，确保向下取整
-
-### 2. 进阶练习
-
-// ... existing code ...
