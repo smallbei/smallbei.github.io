@@ -2,7 +2,7 @@
 layout: post
 title: "iOS中的离屏渲染：原理、性能影响与优化策略"
 date: 2025-03-20
-tags: "iOS 性能优化 图形渲染 离屏渲染"
+tags: "iOS 性能优化 图形渲染 离屏渲染 八股文"
 category: 移动开发
 ---
 
