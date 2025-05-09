@@ -4,6 +4,7 @@ title: "iOS 关联属性的底层原理与最佳实践"
 date: 2025-05-09 10:00:00 +0800
 tags: [iOS, Objective-C, Runtime, 关联属性]
 categories: [iOS开发]
+mermaid: true
 ---
 
 # iOS 关联属性的底层原理与实践
