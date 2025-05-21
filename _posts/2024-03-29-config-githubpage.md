@@ -4,6 +4,7 @@ title: "配置GitHubPage"
 date: 2024-03-29
 tags: jekyll DNS配置 工具
 category: 
+mermaid: true
 ---
 
 ## 环境配置 [jekyll](https://jekyllrb.com/)
@@ -76,11 +77,10 @@ brew install rbenv ruby-build
 
 2. 配置shell环境:
 ```bash
-# 对于zsh
+对于zsh
 echo 'eval "$(rbenv init -)"' >> ~/.zshrc
 source ~/.zshrc
-
-# 对于bash
+对于bash
 echo 'eval "$(rbenv init -)"' >> ~/.bash_profile
 source ~/.bash_profile
 ```
@@ -121,7 +121,9 @@ Bundler found conflicting requirements for the Ruby version:
 ```
 Could not find gem 'jekyll-theme-chirpy (~> 6.5, >= 6.5.5)' in any of the gem sources listed in your Gemfile.
 ```
+
 解决方案：
+
 ```bash
 # 更新RubyGems
 gem update --system
@@ -168,7 +170,15 @@ mermaid:
 ```
 
 3. 在文章中使用Mermaid语法:
-```markdown
+```
+flowchart TD
+    A[开始] --> B{判断条件}
+    B -->|条件1| C[处理1]
+    B -->|条件2| D[处理2]
+    C --> E[结束]
+    D --> E
+```
+
 ```mermaid
 flowchart TD
     A[开始] --> B{判断条件}
@@ -177,9 +187,9 @@ flowchart TD
     C --> E[结束]
     D --> E
 ```
-```
 
 4. 如果主题默认不支持Mermaid，可在`_includes/head.html`或相应位置添加:
+
 ```html
 {% if page.mermaid or site.mermaid.enabled %}
 <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
@@ -233,15 +243,16 @@ Page [参考文档：](https://docs.github.com/zh/pages/configuring-a-custom-dom
 
 Ipv4 相关 DNS
 
-```sh
+```bash
 185.199.108.153
 185.199.109.153
 185.199.110.153
 185.199.111.153
 ```
+
 Ipv6 相关 DNS
 
-```sh
+```bash
 2606:50c0:8000::153
 2606:50c0:8001::153
 2606:50c0:8002::153
