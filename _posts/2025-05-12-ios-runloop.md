@@ -12,17 +12,17 @@ tags: [RunLoop, iOS, Optimization, Concurrency, Animation]
 RunLoop 是 iOS/macOS 系统的核心事件处理机制，负责事件调度、线程休眠与唤醒、定时器管理等任务。本文系统梳理 RunLoop 的本质、内存结构、源码实现、典型应用场景与性能优化方法，并结合实际开发中的卡顿监控方案进行分析。
 
 ## 目录
-- [RunLoop 基础与作用](#runloop-基础与作用)
-- [内存结构与源码解读](#内存结构与源码解读)
-- [运行机制与状态流转](#运行机制与状态流转)
-- [典型应用场景](#典型应用场景)
-- [动画与性能优化](#动画与性能优化)
-- [卡顿监控方案](#卡顿监控方案)
-- [内存管理与 RunLoop](#内存管理与-runloop)
-- [实际应用案例](#实际应用案例)
-- [总结](#总结)
+- [RunLoop 基础与作用](#runloop-base)
+- [内存结构与源码解读](#memory-structure)
+- [运行机制与状态流转](#runloop-state)
+- [典型应用场景](#practical-scenarios)
+- [卡顿监控方案](#lag-detection)
+- [内存管理与 RunLoop](#memory-management)
+- [实际应用案例](#practical-examples)
+- [总结](#summary)
 
-## RunLoop 基础与作用
+## RunLoop 基础与作用 {#runloop-base}
+<a id="runloop-base"></a>
 
 RunLoop 作为事件循环机制，协调输入源、定时器、观察者等多种事件的处理时机。其主要作用包括：
 - 管理线程的事件循环，避免资源浪费
@@ -31,7 +31,8 @@ RunLoop 作为事件循环机制，协调输入源、定时器、观察者等多
 
 在 iOS 中，主线程 RunLoop 在应用启动时自动创建并运行，子线程需手动创建和启动。RunLoop 对象为线程私有，存储于 TLS（Thread Local Storage）中。
 
-## 内存结构与源码解读
+## 内存结构与源码解读 {#memory-structure}
+<a id="memory-structure"></a>
 
 RunLoop 的底层实现位于 CoreFoundation，主要结构体包括：
 
@@ -64,7 +65,8 @@ struct __CFRunLoop {
 };
 ```
 
-## 运行机制与状态流转
+## 运行机制与状态流转 {#runloop-state}
+<a id="runloop-state"></a>
 
 RunLoop 的核心循环包括以下阶段：
 1. 通知观察者 RunLoop 即将进入循环
@@ -79,7 +81,8 @@ RunLoop 的核心循环包括以下阶段：
 
 状态流转顺序为：进入 -> 处理 Timers -> 处理 Sources -> 休眠 -> 被唤醒 -> 处理唤醒事件 -> 退出。
 
-## 典型应用场景
+## 典型应用场景 {#practical-scenarios}
+<a id="practical-scenarios"></a>
 
 ### NSTimer 与 RunLoop
 
@@ -188,7 +191,8 @@ UIView 动画本质上是对 Core Animation 的进一步封装。动画的实际
 - 对于高频动画，确保主线程 RunLoop 保持流畅，减少阻塞点。
 - 使用 Instruments 的 Time Profiler、Core Animation 工具分析主线程卡顿和动画掉帧原因。
 
-## 卡顿监控方案
+## 卡顿监控方案 {#lag-detection}
+<a id="lag-detection"></a>
 
 通过监听主线程 RunLoop 状态变化，可实现卡顿监控。常用方法为在 kCFRunLoopBeforeSources 与 kCFRunLoopAfterWaiting 状态间检测超时(要认真识别状态)，结合信号量与子线程定期检测主线程状态。
 
@@ -203,7 +207,8 @@ CFRunLoopObserverRef observer = CFRunLoopObserverCreate(
 CFRunLoopAddObserver(CFRunLoopGetMain(), observer, kCFRunLoopCommonModes);
 ```
 
-## 内存管理与 RunLoop
+## 内存管理与 RunLoop {#memory-management}
+<a id="memory-management"></a>
 
 在 iOS 应用中，自动释放池（Autorelease Pool）的管理与 RunLoop 密切相关。RunLoop 能够管理内存，核心原因在于其生命周期与线程事件循环高度绑定，能够精准控制对象的释放时机，避免内存泄漏和资源滥用。
 
@@ -283,7 +288,8 @@ while (appIsRunning) {
 }
 ```
 
-## 实际应用案例
+## 实际应用案例 {#practical-examples}
+<a id="practical-examples"></a>
 
 ### 检测主线程卡顿的简单示例（很简单，很多case未兼容只是示例）
 
@@ -393,6 +399,7 @@ timer.resume()
 
 这些案例展示了 RunLoop 在现代 iOS 技术栈中的实际作用。虽然开发者日常很少直接操作 RunLoop，但理解其原理有助于更好地把握 Swift Concurrency、Combine、SwiftUI、GCD 等新技术的底层机制和性能优化点。
 
-## 总结
+## 总结 {#summary}
+<a id="summary"></a>
 
 RunLoop 作为 iOS 事件调度的核心机制，通过多层结构实现高效事件管理。合理利用 RunLoop 机制，有助于提升应用性能与响应性，优化动画与多线程场景下的用户体验。
