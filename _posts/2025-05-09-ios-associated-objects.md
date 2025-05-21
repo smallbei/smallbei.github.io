@@ -98,25 +98,39 @@ using AssociationsHashMap = DenseMap<DisguisedPtr<objc_object>, ObjectAssociatio
 
 ```mermaid
 flowchart TD
+    %% 全局关联表
     subgraph Global["全局关联表 AssociationsHashMap"]
-        ObjAddr1["对象地址1 (DisguisedPtr)"] --> ObjMap1["ObjectAssociationMap 1"]
-        ObjAddr2["对象地址2 (DisguisedPtr)"] --> ObjMap2["ObjectAssociationMap 2"]
-        ObjAddr3["..."] --> ObjMap3["..."]
+        style Global fill:#23272e,stroke:#666,stroke-width:1px,color:#fff
+        Obj1["对象地址1 (DisguisedPtr)"]
+        Obj2["对象地址2 (DisguisedPtr)"]
+        Obj1 --> Map1
+        Obj2 --> Map2
     end
 
-    subgraph ObjMap["对象关联表 ObjectAssociationMap"]
-        Key1["关联键1 (const void*)"] --> Assoc1["ObjcAssociation 1"]
-        Key2["关联键2 (const void*)"] --> Assoc2["ObjcAssociation 2"] 
-        Key3["..."] --> Assoc3["..."]
+    %% 对象1的关联表
+    subgraph Map1["ObjectAssociationMap 1"]
+        style Map1 fill:#333,stroke:#888,color:#eee
+        direction TB
+        Key1["关联值1 (const void*)"]
+        Key1 --> Policy1["policy"]
+        Key1 --> Value1["Value"]
     end
 
-    subgraph Assoc["关联值包装 ObjcAssociation"]
-        Policy["policy (内存管理策略)"]
-        Value["value (关联的实际对象)"]
+    %% 对象2的关联表
+    subgraph Map2["ObjectAssociationMap 2"]
+        style Map2 fill:#333,stroke:#888,color:#eee
+        direction TB
+        Key2["关联值2 (const void*)"]
+        Key2 --> Policy2["policy"]
+        Key2 --> Value2["Value"]
     end
 
-    Global --> ObjMap
-    ObjMap --> Assoc
+    %% 样式
+    classDef node fill:none,stroke:#aaa,color:#fff
+    class Obj1,Obj2,Map1,Map2,Key1,Key2,Policy1,Policy2,Value1,Value2 node
+
+    %% 线条样式
+    linkStyle 0,1,2,3,4,5 stroke:#888,stroke-width:1px
 ```
 
 这个存储结构的工作原理：
