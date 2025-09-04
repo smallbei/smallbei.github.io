@@ -9,7 +9,7 @@ tags: [Xcode, CocoaPods, Bundler, Simulator, Shell]
 
 在实际 iOS 开发中，Xcode 缓存、CocoaPods、Bundler、模拟器数据等经常成为「神秘问题」的根源：构建失败、无法解析头文件、模拟器存储暴涨、设备支持文件占用几十 GB……为此我写了一个一站式脚本 clean_pod.sh，支持命令行和交互两种方式，覆盖常见的清理与重装动作，尽量做到安全、可视、可回退。
 
-源码位置：<mcfile name="clean_pod.sh" path='https://github.com/smallbei/smallbei.github.io/blob/main/clean_pod.sh'></mcfile>
+源码位置：[clean_pod.sh](https://github.com/smallbei/smallbei.github.io/blob/main/clean_pod.sh)
 
 ## 设计目标与整体架构
 
@@ -39,7 +39,7 @@ tags: [Xcode, CocoaPods, Bundler, Simulator, Shell]
 - 任务收尾
   - 非「仅安装」模式下自动关闭 Xcode；输出清理结果摘要与下一步提示
 
-## 核心执行流程（TL;DR）
+## 核心执行流程
 
 1) 探测项目结构：优先 .xcworkspace，回退 .xcodeproj
 2) 解析可用 Schemes，按三阶段规则选中最终 Scheme，并在日志中明确打印
