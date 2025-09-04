@@ -138,7 +138,8 @@ handle_interactive_choice() {
         10)
             echo -e "\n${GREEN}✅ 选择: Xcode 设备和模拟器管理${NC}"
             show_device_management_menu
-            return 0
+            # 从设备管理菜单返回后，重新显示主菜单而不是继续执行清理
+            return 1
             ;;
         0)
             echo -e "\n${YELLOW}👋 退出程序${NC}"
@@ -157,7 +158,7 @@ show_device_management_menu() {
     while true; do
         clear
         echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║                📱 Xcode 设备和模拟器管理                    ║${NC}"
+        echo -e "${CYAN}║                📱 Xcode 设备和模拟器管理                     ║${NC}"
         echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
         echo
         echo -e "${YELLOW}请选择要执行的操作:${NC}"
@@ -224,9 +225,9 @@ show_simulators_info() {
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
     
     # 获取所有模拟器列表
-    xcrun simctl list devices --json > /tmp/simulators.json 2>/dev/null
+    local simulators_json=$(xcrun simctl list devices --json 2>/dev/null)
     
-    if [ $? -ne 0 ]; then
+    if [ $? -ne 0 ] || [ -z "$simulators_json" ]; then
         echo -e "${RED}❌ 无法获取模拟器信息${NC}"
         echo -e "\n${YELLOW}按 Enter 键继续...${NC}"
         read -r
@@ -237,78 +238,111 @@ show_simulators_info() {
     echo
     
     # 计算总占用空间
-    local total_size=0
     local simulator_count=0
     
-    # 遍历模拟器目录
+    # 模拟器目录
     local simulator_dir="$HOME/Library/Developer/CoreSimulator/Devices"
-    if [ -d "$simulator_dir" ]; then
-        for device_dir in "$simulator_dir"/*; do
-            if [ -d "$device_dir" ]; then
-                local device_id=$(basename "$device_dir")
-                local device_size=$(du -sh "$device_dir" 2>/dev/null | cut -f1)
-                
-                # 获取设备名称和状态
-                local device_info=$(xcrun simctl list devices | grep "$device_id" | head -1)
-                if [ -n "$device_info" ]; then
-                    # 更精确的设备名称解析
-                    local device_name=$(echo "$device_info" | sed -E 's/^[[:space:]]*([^(]+).*$/\1/' | sed 's/[[:space:]]*$//')
-                    local device_status="未知"
-                    
-                    # 解析设备状态
-                    if echo "$device_info" | grep -q "(Shutdown)"; then
-                        device_status="Shutdown"
-                    elif echo "$device_info" | grep -q "(Booted)"; then
-                        device_status="Booted"
-                    elif echo "$device_info" | grep -q "unavailable"; then
-                        device_status="unavailable"
-                        # 对于不可用设备，尝试从plist获取更好的名称
-                        local plist_file="$device_dir/device.plist"
-                        if [ -f "$plist_file" ]; then
-                            local plist_name=$(plutil -p "$plist_file" 2>/dev/null | grep '"name"' | sed 's/.*"name" => "\(.*\)"/\1/')
-                            if [ -n "$plist_name" ]; then
-                                device_name="$plist_name"
-                            fi
-                        fi
-                    fi
-                    
-                    # 如果设备名称为空或只包含ID，使用默认名称
-                    if [ -z "$device_name" ] || [[ "$device_name" =~ ^[A-F0-9-]{36}$ ]]; then
-                        device_name="未知设备"
-                    fi
-                    
-                    # 根据状态显示不同颜色
-                    if [ "$device_status" = "Shutdown" ]; then
-                        echo -e "  ${YELLOW}📱${NC} $device_name ${GRAY}($device_status)${NC} - ${BLUE}$device_size${NC}"
-                    elif [ "$device_status" = "Booted" ]; then
-                        echo -e "  ${GREEN}📱${NC} $device_name ${GREEN}($device_status)${NC} - ${BLUE}$device_size${NC}"
-                    elif [ "$device_status" = "unavailable" ]; then
-                        echo -e "  ${RED}📱${NC} $device_name ${RED}($device_status)${NC} - ${BLUE}$device_size${NC}"
-                    else
-                        echo -e "  ${CYAN}📱${NC} $device_name ${CYAN}($device_status)${NC} - ${BLUE}$device_size${NC}"
-                    fi
-                    
-                    simulator_count=$((simulator_count + 1))
-                fi
-            fi
-        done
-        
-        # 计算总大小
-        local total_size_mb=$(du -sm "$simulator_dir" 2>/dev/null | cut -f1)
-        if [ -n "$total_size_mb" ]; then
-            if [ $total_size_mb -gt 1024 ]; then
-                local total_size_gb=$((total_size_mb / 1024))
-                echo -e "\n${CYAN}📊 统计信息:${NC}"
-                echo -e "  模拟器数量: ${YELLOW}$simulator_count${NC}"
-                echo -e "  总占用空间: ${RED}${total_size_gb}GB${NC}"
-            else
-                echo -e "\n${CYAN}📊 统计信息:${NC}"
-                echo -e "  模拟器数量: ${YELLOW}$simulator_count${NC}"
-                echo -e "  总占用空间: ${RED}${total_size_mb}MB${NC}"
-            fi
-        fi
-    else
+    if [ ! -d "$simulator_dir" ]; then
         echo -e "${YELLOW}⚠️ 未找到模拟器目录${NC}"
+        echo -e "\n${YELLOW}按 Enter 键继续...${NC}"
+        read -r
+        return
+    fi
+    
+    # 一次性获取所有设备目录大小
+    local device_sizes=$(find "$simulator_dir" -maxdepth 1 -mindepth 1 -type d -exec du -sk {} \; 2>/dev/null)
+    
+    # 使用Python解析JSON和处理设备信息
+    # 创建临时Python脚本文件
+    local temp_py_file=$(mktemp)
+    cat > "$temp_py_file" << 'EOF'
+import sys
+import json
+import os
+
+try:
+    data = json.load(sys.stdin)
+    devices = {}
+    sizes = {}
+    
+    # 解析设备大小信息
+    for line in sys.argv[1].split('\n'):
+        if line.strip():
+            parts = line.split()
+            if len(parts) >= 2:
+                size_kb = int(parts[0])
+                path = parts[1]
+                device_id = os.path.basename(path)
+                sizes[device_id] = size_kb
+    
+    # 处理设备信息
+    for runtime, device_list in data.get('devices', {}).items():
+        for device in device_list:
+            udid = device.get('udid', '')
+            name = device.get('name', 'Unknown Device')
+            state = device.get('state', 'Unknown')
+            available = device.get('isAvailable', True)
+            size_kb = sizes.get(udid, 0)
+            
+            # 格式化大小
+            if size_kb > 1024*1024:
+                size_str = f'{size_kb/(1024*1024):.1f}GB'
+            elif size_kb > 1024:
+                size_str = f'{size_kb/1024:.1f}MB'
+            else:
+                size_str = f'{size_kb}KB'
+            
+            # 输出设备信息
+            status = 'unavailable' if not available else state
+            print(f'{udid}\t{name}\t{status}\t{size_str}')
+    
+    # 计算总大小
+    total_kb = sum(sizes.values())
+    if total_kb > 1024*1024:
+        print(f'TOTAL\t{len(sizes)}\t{total_kb/(1024*1024):.1f}GB')
+    else:
+        print(f'TOTAL\t{len(sizes)}\t{total_kb/1024:.1f}MB')
+except Exception as e:
+    print(f'ERROR: {str(e)}')
+EOF
+    
+    # 执行Python脚本处理数据
+    local devices_info=$(echo "$simulators_json" | /usr/bin/python3 "$temp_py_file" "$device_sizes")
+    
+    # 删除临时文件
+    rm -f "$temp_py_file"
+    
+    # 处理Python脚本输出
+    local total_info=""
+    local simulator_count=0
+    
+    while IFS=$'\t' read -r device_id device_name device_status device_size; do
+        if "$device_id" = "TOTAL" ]; then
+            simulator_count=$device_name
+            total_info="$device_size"
+            continue
+        elif [[ "$device_id" == ERROR:* ]]; then
+            echo -e "${RED}❌ 处理模拟器信息时出错: ${device_id#ERROR: }${NC}"
+            continue
+        fi
+        
+        # 根据状态显示不同颜色
+        if [ "$device_status" = "Shutdown" ]; then
+            echo -e "  ${YELLOW}📱${NC} $device_name ${GRAY}($device_status)${NC} - ${BLUE}$device_size${NC}"
+        elif [ "$device_status" = "Booted" ]; then
+            echo -e "  ${GREEN}📱${NC} $device_name ${GREEN}($device_status)${NC} - ${BLUE}$device_size${NC}"
+        elif [ "$device_status" = "unavailable" ]; then
+            echo -e "  ${RED}📱${NC} $device_name ${RED}($device_status)${NC} - ${BLUE}$device_size${NC}"
+        else
+            echo -e "  ${CYAN}📱${NC} $device_name ${CYAN}($device_status)${NC} - ${BLUE}$device_size${NC}"
+        fi
+    done <<< "$devices_info"
+    
+    # 显示统计信息
+    if [ -n "$total_info" ] && [ "$simulator_count" -gt 0 ]; then
+        echo -e "\n${CYAN}📊 统计信息:${NC}"
+        echo -e "  模拟器数量: ${YELLOW}$simulator_count${NC}"
+        echo -e "  总占用空间: ${RED}$total_info${NC}"
     fi
     
     echo -e "\n${YELLOW}按 Enter 键继续...${NC}"
@@ -319,8 +353,39 @@ show_simulators_info() {
 delete_unavailable_simulators() {
     echo -e "\n${BLUE}🔍 正在查找不可用的模拟器...${NC}"
     
-    # 获取不可用的模拟器
-    local unavailable_simulators=$(xcrun simctl list devices | grep "unavailable" | wc -l | tr -d ' ')
+    # 使用JSON格式获取所有模拟器
+    local simulators_json=$(xcrun simctl list devices --json 2>/dev/null)
+    
+    if [ $? -ne 0 ] || [ -z "$simulators_json" ]; then
+        echo -e "${RED}❌ 无法获取模拟器信息${NC}"
+        echo -e "\n${YELLOW}按 Enter 键继续...${NC}"
+        read -r
+        return
+    fi
+    
+    # 创建临时Python脚本文件
+    local temp_py_file=$(mktemp)
+    cat > "$temp_py_file" << 'EOF'
+import sys
+import json
+
+try:
+    data = json.load(sys.stdin)
+    unavailable_count = 0
+    for runtime, device_list in data.get('devices', {}).items():
+        for device in device_list:
+            if device.get('isAvailable', True) == False:
+                unavailable_count += 1
+    print(unavailable_count)
+except Exception as e:
+    print('0')
+EOF
+
+    # 执行Python脚本
+    local unavailable_simulators=$(echo "$simulators_json" | /usr/bin/python3 "$temp_py_file")
+    
+    # 删除临时文件
+    rm -f "$temp_py_file"
     
     if [ "$unavailable_simulators" -eq 0 ]; then
         echo -e "${GREEN}✅ 没有发现不可用的模拟器${NC}"
@@ -351,10 +416,43 @@ delete_unavailable_simulators() {
 interactive_delete_simulators() {
     echo -e "\n${BLUE}🔍 正在获取模拟器列表...${NC}"
     
-    # 获取所有关闭的模拟器
-    local simulators=$(xcrun simctl list devices | grep "Shutdown" | grep -v "unavailable")
+    # 使用JSON格式获取所有模拟器
+    local simulators_json=$(xcrun simctl list devices --json 2>/dev/null)
     
-    if [ -z "$simulators" ]; then
+    if [ $? -ne 0 ] || [ -z "$simulators_json" ]; then
+        echo -e "${RED}❌ 无法获取模拟器信息${NC}"
+        echo -e "\n${YELLOW}按 Enter 键继续...${NC}"
+        read -r
+        return
+    fi
+    
+    # 使用Python解析JSON并获取已关闭的模拟器
+    # 创建临时Python脚本文件
+    local temp_py_file=$(mktemp)
+    cat > "$temp_py_file" << 'EOF'
+import sys
+import json
+
+try:
+    data = json.load(sys.stdin)
+    devices = []
+    for runtime, device_list in data.get('devices', {}).items():
+        for device in device_list:
+            if device.get('state') == 'Shutdown' and not device.get('isAvailable', True) == False:
+                devices.append({'udid': device.get('udid', ''), 'name': device.get('name', '')})
+    print(json.dumps(devices))
+except Exception as e:
+    print('[]')
+EOF
+
+    # 执行Python脚本
+    local simulators_info=$(echo "$simulators_json" | /usr/bin/python3 "$temp_py_file")
+    
+    # 删除临时文件
+    rm -f "$temp_py_file"
+    
+    # 检查是否有可用的模拟器
+    if [ "$simulators_info" = "[]" ]; then
         echo -e "${YELLOW}⚠️ 没有找到可删除的模拟器（只能删除已关闭的模拟器）${NC}"
         echo -e "\n${YELLOW}按 Enter 键继续...${NC}"
         read -r
@@ -369,16 +467,55 @@ interactive_delete_simulators() {
     local -a simulator_names
     local index=1
     
+    # 使用Python解析JSON并显示模拟器列表
+    # 创建临时Python脚本文件用于解析设备信息
+    local temp_py_parser=$(mktemp)
+    cat > "$temp_py_parser" << 'EOF'
+import sys
+import json
+
+try:
+    data = json.loads(sys.stdin.read())
+    print(data.get('udid', '') + '\t' + data.get('name', ''))
+except Exception:
+    print('\t')
+EOF
+
+    # 创建临时Python脚本文件用于处理设备列表
+    local temp_py_lister=$(mktemp)
+    cat > "$temp_py_lister" << 'EOF'
+import sys
+import json
+
+try:
+    devices = json.loads(sys.stdin.read())
+    for device in devices:
+        print(json.dumps(device))
+except Exception:
+    pass
+EOF
+
+    # 处理每个设备
     while IFS= read -r line; do
-        local device_id=$(echo "$line" | grep -o '[A-F0-9-]\{36\}')
-        local device_name=$(echo "$line" | sed 's/.*) //g' | sed 's/ (.*//g')
-        
-        simulator_ids[$index]="$device_id"
-        simulator_names[$index]="$device_name"
-        
-        echo -e "  ${BLUE}$index)${NC} $device_name"
-        index=$((index + 1))
-    done <<< "$simulators"
+        if [[ -n "$line" ]]; then
+            # 使用临时Python脚本提取udid和name
+            local device_info=$(echo "$line" | /usr/bin/python3 "$temp_py_parser")
+            
+            local device_id=$(echo "$device_info" | cut -f1)
+            local device_name=$(echo "$device_info" | cut -f2)
+            
+            if [[ -n "$device_id" && -n "$device_name" ]]; then
+                simulator_ids[$index]="$device_id"
+                simulator_names[$index]="$device_name"
+                
+                echo -e "  ${BLUE}$index)${NC} $device_name"
+                index=$((index + 1))
+            fi
+        fi
+    done < <(echo "$simulators_info" | /usr/bin/python3 "$temp_py_lister")
+    
+    # 删除临时文件
+    rm -f "$temp_py_parser" "$temp_py_lister"
     
     echo -e "\n  ${RED}0)${NC} 返回上级菜单"
     echo -e "\n${PURPLE}请选择要删除的模拟器编号 (多个编号用空格分隔): ${NC}"
@@ -450,14 +587,50 @@ show_connected_devices() {
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
     
     # 获取连接的设备
-    local devices=$(xcrun xctrace list devices 2>/dev/null | grep -v "Simulator" | grep -v "^=" | grep -v "^My Mac")
+    local devices_json=$(xcrun xctrace list devices --json 2>/dev/null)
     
-    if [ -z "$devices" ]; then
+    if [ $? -ne 0 ] || [ -z "$devices_json" ]; then
+        echo -e "${RED}❌ 无法获取设备信息${NC}"
+        echo -e "\n${YELLOW}按 Enter 键继续...${NC}"
+        read -r
+        return
+    fi
+    
+    # 创建临时Python脚本文件
+    local temp_py_file=$(mktemp)
+    cat > "$temp_py_file" << 'EOF'
+import sys
+import json
+
+try:
+    data = json.load(sys.stdin)
+    devices = []
+    for device in data.get('devices', []):
+        # 排除模拟器和Mac
+        if not device.get('simulator', False) and device.get('type', '') != 'mac':
+            devices.append(f"{device.get('name', 'Unknown')} ({device.get('identifier', 'Unknown')})")
+    
+    if devices:
+        for device in devices:
+            print(device)
+    else:
+        print("NO_DEVICES")
+except Exception as e:
+    print(f"ERROR: {str(e)}")
+EOF
+
+    # 执行Python脚本
+    local devices_output=$(echo "$devices_json" | /usr/bin/python3 "$temp_py_file")
+    
+    # 删除临时文件
+    rm -f "$temp_py_file"
+    
+    if [ "$devices_output" = "NO_DEVICES" ] || [[ "$devices_output" == ERROR:* ]]; then
         echo -e "${YELLOW}⚠️ 没有发现连接的设备${NC}"
     else
         echo -e "${GREEN}📲 连接的设备:${NC}"
         echo
-        echo "$devices" | while IFS= read -r line; do
+        echo "$devices_output" | while IFS= read -r line; do
             if [ -n "$line" ]; then
                 echo -e "  ${GREEN}📱${NC} $line"
             fi
@@ -482,31 +655,128 @@ clean_device_support_files() {
     echo -e "\n${BLUE}🔍 正在扫描设备支持文件...${NC}"
     
     local total_size=$(du -sh "$device_support_dir" 2>/dev/null | cut -f1)
-    local file_count=$(find "$device_support_dir" -type d -maxdepth 1 | wc -l | tr -d ' ')
-    file_count=$((file_count - 1))  # 减去目录本身
+    
+    # 获取所有设备支持文件夹及其大小
+    local device_folders=()
+    local folder_sizes=()
+    local i=0
+    
+    while IFS= read -r folder; do
+        if [ -d "$folder" ] && [ "$folder" != "$device_support_dir" ]; then
+            local folder_name=$(basename "$folder")
+            local folder_size=$(du -sh "$folder" 2>/dev/null | cut -f1)
+            device_folders[$i]="$folder_name"
+            folder_sizes[$i]="$folder_size"
+            i=$((i+1))
+        fi
+    done < <(find "$device_support_dir" -type d -maxdepth 1)
+    
+    local file_count=${#device_folders[@]}
     
     echo -e "${CYAN}📊 设备支持文件信息:${NC}"
     echo -e "  文件数量: ${YELLOW}$file_count${NC}"
     echo -e "  占用空间: ${RED}$total_size${NC}"
     echo
     
-    if [ $file_count -gt 0 ]; then
+    if [ $file_count -eq 0 ]; then
+        echo -e "${YELLOW}没有设备支持文件${NC}"
+        echo -e "\n${YELLOW}按 Enter 键继续...${NC}"
+        read -r
+        return
+    fi
+    
+    # 显示设备支持文件列表
+    echo -e "${CYAN}📱 设备支持文件列表:${NC}"
+    for ((i=0; i<${#device_folders[@]}; i++)); do
+        echo -e "  ${YELLOW}$((i+1))${NC}. ${GREEN}${device_folders[$i]}${NC} (${RED}${folder_sizes[$i]}${NC})"
+    done
+    echo -e "  ${YELLOW}0${NC}. 返回"
+    echo -e "  ${YELLOW}a${NC}. 删除所有文件"
+    echo
+    
+    echo -e "${BLUE}请选择要删除的设备支持文件 (输入序号，多个序号用空格分隔): ${NC}"
+    read -r selection
+    
+    if [ "$selection" = "0" ]; then
+        echo -e "${YELLOW}返回上级菜单${NC}"
+        return
+    elif [ "$selection" = "a" ] || [ "$selection" = "A" ]; then
         echo -e "${RED}⚠️ 确定要删除所有设备支持文件吗？${NC}"
         echo -e "${YELLOW}注意: 删除后首次连接设备时需要重新下载支持文件${NC}"
         echo -e "${RED}确认删除? (y/N): ${NC}"
         read -r confirm
         
         if [[ "$confirm" =~ ^[Yy]$ ]]; then
-            echo -e "\n${BLUE}🗑️ 正在删除设备支持文件...${NC}"
+            echo -e "\n${BLUE}🗑️ 正在删除所有设备支持文件...${NC}"
             rm -rf "$device_support_dir"/*
             
             if [ $? -eq 0 ]; then
-                echo -e "${GREEN}✅ 成功删除设备支持文件${NC}"
+                echo -e "${GREEN}✅ 成功删除所有设备支持文件${NC}"
             else
                 echo -e "${RED}❌ 删除失败${NC}"
             fi
         else
             echo -e "${YELLOW}取消删除操作${NC}"
+        fi
+    else
+        # 处理多选
+        local selected_indices=()
+        read -ra selected_indices <<< "$selection"
+        
+        if [ ${#selected_indices[@]} -gt 0 ]; then
+            local to_delete=()
+            local invalid_selection=false
+            
+            for idx in "${selected_indices[@]}"; do
+                if ! [[ "$idx" =~ ^[0-9]+$ ]]; then
+                    echo -e "${RED}❌ 无效的选择: $idx${NC}"
+                    invalid_selection=true
+                    break
+                fi
+                
+                if [ "$idx" -ge 1 ] && [ "$idx" -le "$file_count" ]; then
+                    to_delete+=("${device_folders[$((idx-1))]}")
+                else
+                    echo -e "${RED}❌ 无效的选择: $idx${NC}"
+                    invalid_selection=true
+                    break
+                fi
+            done
+            
+            if [ "$invalid_selection" = false ] && [ ${#to_delete[@]} -gt 0 ]; then
+                echo -e "\n${YELLOW}您选择删除以下设备支持文件:${NC}"
+                for folder in "${to_delete[@]}"; do
+                    echo -e "  ${RED}$folder${NC}"
+                done
+                
+                echo -e "${RED}确认删除? (y/N): ${NC}"
+                read -r confirm
+                
+                if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                    echo -e "\n${BLUE}🗑️ 正在删除选定的设备支持文件...${NC}"
+                    local success=true
+                    
+                    for folder in "${to_delete[@]}"; do
+                        echo -e "${YELLOW}删除: $folder${NC}"
+                        rm -rf "$device_support_dir/$folder"
+                        
+                        if [ $? -ne 0 ]; then
+                            echo -e "${RED}❌ 删除 $folder 失败${NC}"
+                            success=false
+                        fi
+                    done
+                    
+                    if [ "$success" = true ]; then
+                        echo -e "${GREEN}✅ 成功删除选定的设备支持文件${NC}"
+                    else
+                        echo -e "${RED}❌ 部分文件删除失败${NC}"
+                    fi
+                else
+                    echo -e "${YELLOW}取消删除操作${NC}"
+                fi
+            fi
+        else
+            echo -e "${YELLOW}未选择任何文件${NC}"
         fi
     fi
     
@@ -640,22 +910,118 @@ fi
 
 # 2. 如果有Xcode项目，获取Scheme并清理
 if [ "$HAS_XCODE_PROJECT" = true ]; then
-    # 获取第一个 Scheme
+    # 获取共享的 Scheme (优先使用共享的Scheme，即在Xcode中显示的Scheme)
     if [ "$USE_PROJECT" = true ]; then
-        SCHEME=$(xcodebuild -list -project "$PROJECT_FILE" | awk '/Schemes:/ { getline; print $1; exit }')
-        if [ -z "$SCHEME" ]; then
-            SCHEME="$PROJECT_NAME" # 默认使用项目名
-        fi
         echo -e "${GREEN}✅ 项目文件: ${NC}$PROJECT_FILE"
-    else
-        SCHEME=$(xcodebuild -list -workspace "$WORKSPACE_FILE" | awk '/Schemes:/ { getline; print $1; exit }')
+        
+        # 查找共享的scheme文件
+        SHARED_SCHEMES_DIR="$(dirname "$PROJECT_FILE")/xcshareddata/xcschemes"
+        if [ -d "$SHARED_SCHEMES_DIR" ]; then
+            # 获取共享的scheme名称（去除.xcscheme后缀）
+            SHARED_SCHEMES=$(find "$SHARED_SCHEMES_DIR" -name "*.xcscheme" -exec basename {} \; | sed 's/\.xcscheme$//')
+            if [ -n "$SHARED_SCHEMES" ]; then
+                SCHEMES="$SHARED_SCHEMES"
+                # 应用偏好规则：精确匹配项目名 > 排除测试/示例 > 第一个
+                PREFERRED=$(echo "$SCHEMES" | awk -v name="$PROJECT_NAME" '$0==name{print;exit}')
+                if [ -z "$PREFERRED" ]; then
+                    PREFERRED=$(echo "$SCHEMES" | grep -viE '(tests$|uitests$|ui tests$|example$|demo$|sample$)' | head -n 1)
+                fi
+                [ -z "$PREFERRED" ] && PREFERRED=$(echo "$SCHEMES" | head -n 1)
+                SCHEME="$PREFERRED"
+                echo -e "${GREEN}✅ 使用共享的Scheme: ${NC}$SCHEME"
+            fi
+        fi
+        
+        # 如果没有找到共享的scheme，则使用JSON格式获取所有Scheme
+        if [ -z "$SCHEME" ]; then
+            SCHEMES_JSON=$(xcodebuild -list -project "$PROJECT_FILE" -json 2>/dev/null)
+            if [ $? -eq 0 ] && [ -n "$SCHEMES_JSON" ]; then
+                SCHEMES=$(echo "$SCHEMES_JSON" | /usr/bin/python3 -c "import sys, json; 
+try:
+    data = json.load(sys.stdin)
+    schemes = data.get('project', {}).get('schemes', [])
+    print('\\n'.join(schemes) if schemes else '')
+except Exception:
+    print('')" 2>/dev/null)
+                if [ -n "$SCHEMES" ]; then
+                    PREFERRED=$(echo "$SCHEMES" | awk -v name="$PROJECT_NAME" '$0==name{print;exit}')
+                    if [ -z "$PREFERRED" ]; then
+                        PREFERRED=$(echo "$SCHEMES" | grep -viE '(tests$|uitests$|ui tests$|example$|demo$|sample$)' | head -n 1)
+                    fi
+                    [ -z "$PREFERRED" ] && PREFERRED=$(echo "$SCHEMES" | head -n 1)
+                    SCHEME="$PREFERRED"
+                fi
+            fi
+        fi
+        
+        # 如果JSON解析失败或没有Scheme，回退到项目名
         if [ -z "$SCHEME" ]; then
             SCHEME="$PROJECT_NAME" # 默认使用项目名
+            echo -e "${YELLOW}⚠️ 无法获取Scheme，将使用项目名: ${NC}$SCHEME"
         fi
+    else
         echo -e "${GREEN}✅ 工作区文件: ${NC}$WORKSPACE_FILE"
+        
+        # 优先读取与 workspace 同名的 .xcodeproj 下的共享 schemes
+        MAIN_PROJECT_PATH="./${PROJECT_NAME}.xcodeproj"
+        if [ -d "$MAIN_PROJECT_PATH/xcshareddata/xcschemes" ]; then
+            SHARED_SCHEMES_DIR="$MAIN_PROJECT_PATH/xcshareddata/xcschemes"
+        else
+            # 其次尝试 workspace 自身共享 schemes
+            SHARED_SCHEMES_DIR="$(dirname "$WORKSPACE_FILE")/xcshareddata/xcschemes"
+        fi
+        
+        if [ -d "$SHARED_SCHEMES_DIR" ]; then
+            SHARED_SCHEMES=$(find "$SHARED_SCHEMES_DIR" -name "*.xcscheme" -exec basename {} \; | sed 's/\.xcscheme$//')
+            if [ -n "$SHARED_SCHEMES" ]; then
+                SCHEMES="$SHARED_SCHEMES"
+                # 应用偏好规则
+                PREFERRED=$(echo "$SCHEMES" | awk -v name="$PROJECT_NAME" '$0==name{print;exit}')
+                if [ -z "$PREFERRED" ]; then
+                    PREFERRED=$(echo "$SCHEMES" | grep -viE '(tests$|uitests$|ui tests$|example$|demo$|sample$)' | head -n 1)
+                fi
+                [ -z "$PREFERRED" ] && PREFERRED=$(echo "$SCHEMES" | head -n 1)
+                SCHEME="$PREFERRED"
+                echo -e "${GREEN}✅ 使用共享的Scheme: ${NC}$SCHEME"
+            fi
+        fi
+        
+        # 如果没有找到共享的scheme，则使用JSON格式获取所有Scheme
+        if [ -z "$SCHEME" ]; then
+            SCHEMES_JSON=$(xcodebuild -list -workspace "$WORKSPACE_FILE" -json 2>/dev/null)
+            if [ $? -eq 0 ] && [ -n "$SCHEMES_JSON" ]; then
+                SCHEMES=$(echo "$SCHEMES_JSON" | /usr/bin/python3 -c "import sys, json; 
+try:
+    data = json.load(sys.stdin)
+    schemes = data.get('workspace', {}).get('schemes', [])
+    print('\n'.join(schemes) if schemes else '')
+except Exception:
+    print('')" 2>/dev/null)
+                if [ -n "$SCHEMES" ]; then
+                    PREFERRED=$(echo "$SCHEMES" | awk -v name="$PROJECT_NAME" '$0==name{print;exit}')
+                    if [ -z "$PREFERRED" ]; then
+                        PREFERRED=$(echo "$SCHEMES" | grep -viE '(tests$|uitests$|ui tests$|example$|demo$|sample$)' | head -n 1)
+                    fi
+                    [ -z "$PREFERRED" ] && PREFERRED=$(echo "$SCHEMES" | head -n 1)
+                    SCHEME="$PREFERRED"
+                fi
+            fi
+        fi
+        
+        # 如果JSON解析失败或没有Scheme，回退到项目名
+        if [ -z "$SCHEME" ]; then
+            SCHEME="$PROJECT_NAME" # 默认使用项目名
+            echo -e "${YELLOW}⚠️ 无法获取Scheme，将使用项目名: ${NC}$SCHEME"
+        fi
     fi
 
-    echo -e "${GREEN}📛 Scheme: ${NC}$SCHEME"
+    # 显示所有可用的Scheme
+    if [ -n "$SCHEMES" ] && [ "$(echo "$SCHEMES" | wc -l)" -gt 1 ]; then
+        echo -e "${GREEN}📋 可用的Schemes:${NC}"
+        echo "$SCHEMES" | nl -w2 -s') '
+    fi
+    
+    echo -e "${GREEN}📛 当前使用Scheme: ${NC}$SCHEME"
 
     # 3. 清理构建目录
     echo -e "${BLUE}🔄 清理Xcode构建缓存...${NC}"
