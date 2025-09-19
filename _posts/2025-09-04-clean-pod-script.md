@@ -1,292 +1,532 @@
 ---
-title: "Xcode 项目清理脚本 clean_pod.sh：开发思路与使用指南"
+title: "Xcode 项目清理脚本 clean_pod.sh：模块化架构与使用指南"
 date: 2025-09-04
 categories: [iOS, Tools]
-tags: [Xcode, CocoaPods, Bundler, Simulator, Shell]
+tags: [Xcode, CocoaPods, Bundler, Shell, CLI]
 ---
 
 ## 前言
 
-在实际 iOS 开发中，Xcode 缓存、CocoaPods、Bundler、模拟器数据等经常成为「神秘问题」的根源：构建失败、无法解析头文件、模拟器存储暴涨、设备支持文件占用几十 GB……为此我写了一个一站式脚本 clean_pod.sh，支持命令行和交互两种方式，覆盖常见的清理与重装动作，尽量做到安全、可视、可回退。
+在实际 iOS 开发中，Xcode 缓存、CocoaPods、Bundler 等经常成为「神秘问题」的根源：构建失败、无法解析头文件、依赖冲突……为此我重构了 clean_pod.sh 脚本，采用模块化的子命令架构，支持命令行和交互两种方式，专注于核心的清理与重装功能，做到安全、可视、可组合。
 
 源码位置：[clean_pod.sh](https://github.com/smallbei/smallbei.github.io/blob/main/clean_pod.sh)
 
-## 设计目标与整体架构
+## 设计理念与架构重构
 
-- 双入口：
-  - 命令行参数直达：-p/-b 选择清理 Pods 或 Bundler；-r 重新安装依赖；-i/-I 仅安装
-  - 无参数进入交互式菜单，包含组合动作与设备/模拟器管理
-- 可靠的项目探测：自动识别 .xcworkspace 优先，否则回退到 .xcodeproj
-- 清晰的阶段化输出：彩色提示、结果摘要、失败兜底建议
-- 安全优先：仅删除当前项目相关 DerivedData；模拟器与设备支持文件均需二次确认
+### 核心设计原则
+
+- **模块化架构**：每个子命令专注单一职责，便于维护和扩展
+- **灵活组合**：支持全局选项与子命令的自由组合
+- **安全优先**：仅清理当前项目相关缓存，避免误删其他项目
+- **用户友好**：提供交互式和命令行两种使用方式
+
+### 整体架构
+
+```
+clean_pod.sh
+├── 全局选项 (--workdir, --yes, --dry-run, --help)
+├── 子命令系统
+│   ├── xcode-clean          # Xcode 构建缓存清理
+│   ├── pods-clean           # CocoaPods 清理
+│   ├── pods-install         # CocoaPods 安装
+│   ├── pods-reinstall       # CocoaPods 重装
+│   ├── bundler-clean        # Bundler 清理
+│   ├── bundler-install      # Bundler 安装
+│   ├── bundler-reinstall    # Bundler 重装
+│   ├── clean-all            # 完整清理
+│   ├── clean-and-reinstall  # 清理后重装
+│   └── interactive          # 交互式菜单
+└── 核心模块
+    ├── 项目检测模块
+    ├── Xcode 清理模块
+    ├── CocoaPods 管理模块
+    ├── Bundler 管理模块
+    └── 交互式界面模块
+```
 
 ## 功能概览
 
-- Xcode 缓存
-  - 自动探测 workspace 或 project，并按三阶段规则选择 Scheme（优先精确匹配项目名；过滤 Tests/UITests/Example/Demo/Sample；最后回退第一个可用）
-  - 在 workspace 模式下优先查找同名 .xcodeproj 的共享 schemes，其次使用 workspace 自身的共享 schemes
-  - xcodebuild clean，删除 ./build，定向清理 DerivedData/<项目名>-*
-- CocoaPods
-  - 删除 Pods 与 Podfile.lock，可选清理 pod 缓存
-  - 安装策略：检测到 Bundler 时优先 bundle exec；无 Bundler 回退 pod install
-  - .bundle/config 的写入与恢复：仅在需要时创建/修复，并始终将 path 指向 vendor/bundle
-- Bundler
-  - 删除 vendor/bundle 与 .bundle；bundle clean --force
-  - 重新安装并恢复本地 path（vendor/bundle）；在仅安装 Pods 且 .bundle/config 不存在时，为 pod 安装做一次性路径配置
-- 设备与模拟器
-  - 查看模拟器占用、删除不可用设备、选择性删除关机设备、抹除全部模拟器数据
-  - 显示连接真机；清理 iOS DeviceSupport；清理 Xcode Archives
-- 任务收尾
-  - 非「仅安装」模式下自动关闭 Xcode；输出清理结果摘要与下一步提示
+### Xcode 缓存管理
+- **智能项目探测**：优先 .xcworkspace，回退 .xcodeproj
+- **Scheme 选择策略**：精确匹配项目名 → 过滤测试/示例 → 回退第一个可用
+- **定向清理**：仅清理项目相关的 DerivedData 目录
+- **构建清理**：xcodebuild clean + 删除本地 build 目录
 
-## 核心执行流程
+### CocoaPods 管理
+- **清理功能**：删除 Pods 目录、Podfile.lock、清理 pod 缓存
+- **安装策略**：检测 Bundler 时优先 bundle exec，否则直接 pod install
+- **路径配置**：自动配置 .bundle/config 指向 vendor/bundle
 
-1) 探测项目结构：优先 .xcworkspace，回退 .xcodeproj
-2) 解析可用 Schemes，按三阶段规则选中最终 Scheme，并在日志中明确打印
-3) 根据选项执行 Xcode 缓存清理（xcodebuild clean + 本地 build + 定向 DerivedData）
-4) Pods 清理与安装：
-   - 清理 Pods/Podfile.lock 与可选的 pod cache
-   - 优先 bundle exec pod install --clean-install；若无 Bundler，回退 pod install --clean-install
-5) Bundler 清理与安装：
-   - 删除 vendor/bundle 与 .bundle；bundle clean --force
-   - bundle config set --local path 'vendor/bundle' + bundle install
-6) 设备与模拟器工具箱（可选）：查看/删除/抹除/统计等
-7) 收尾：尝试关闭 Xcode，汇总结果
+### Bundler 管理
+- **清理功能**：删除 vendor/bundle、.bundle 目录，清理 Bundler 缓存
+- **安装功能**：配置本地路径并安装依赖
+- **路径管理**：统一使用 vendor/bundle 作为本地安装路径
+
+### 交互式界面
+- **直观菜单**：分类展示各种操作选项
+- **工作目录选择**：支持指定或交互式输入工作目录
+- **操作确认**：重要操作前提供确认提示
 
 ## 使用方式
 
-- 交互式（推荐）：
-  - 直接执行：
-    - ./clean_pod.sh
-  - 典型选项：
-    - 完整清理（Xcode + Pods + Bundler）
-    - 完整清理 + 重新安装所有依赖
-    - 进入「设备和模拟器管理」
-- 命令行直达：
-  - 清理 Pods：
-    - ./clean_pod.sh -p
-  - 清理 Pods 并重装：
-    - ./clean_pod.sh -p -r
-  - 清理 Bundler 并重装：
-    - ./clean_pod.sh -b -r
-  - 仅安装 Pods / 仅安装 Bundler：
-    - ./clean_pod.sh -i
-    - ./clean_pod.sh -I
+### 命令行模式
+
+#### 基本语法
+```bash
+./clean_pod.sh [全局选项] <子命令> [子命令参数]
+```
+
+#### 全局选项
+- `-C, --workdir <path>`：指定工作目录（默认：当前目录）
+- `-y, --yes`：对需要确认的操作自动确认
+- `-n, --dry-run`：仅显示将要执行的命令，不实际执行
+- `-h, --help`：显示帮助信息
+
+#### 子命令列表
+- `xcode-clean`：清理 Xcode 构建缓存与项目 DerivedData
+- `pods-clean`：清理 Pods 与缓存
+- `pods-install`：安装 Pods 依赖
+- `pods-reinstall`：先清理 Pods 再安装
+- `bundler-clean`：清理 Bundler 缓存与目录
+- `bundler-install`：安装 Bundler 依赖
+- `bundler-reinstall`：先清理 Bundler 再安装
+- `clean-all`：清理 Xcode + Pods + Bundler（不安装）
+- `clean-and-reinstall`：清理后安装 Pods 与 Bundler
+- `interactive`：进入交互式菜单
+
+#### 使用示例
+```bash
+# 清理当前项目的 Xcode 缓存
+./clean_pod.sh xcode-clean
+
+# 清理指定项目的 Pods 并重装
+./clean_pod.sh --workdir ~/Projects/MyApp pods-reinstall
+
+# 完整清理并重装所有依赖
+./clean_pod.sh clean-and-reinstall
+
+# 预览将要执行的操作（不实际执行）
+./clean_pod.sh --dry-run clean-all
+
+# 进入交互式菜单
+./clean_pod.sh interactive
+```
+
+### 交互式模式
+
+直接运行脚本进入交互式菜单：
+```bash
+./clean_pod.sh
+```
+
+交互式菜单提供以下选项：
+1. 清理 Xcode 缓存
+2. 清理 Pods 目录
+3. 清理 Pods 目录 + 重新安装
+4. 仅重新安装 Pods 依赖
+5. 清理 Bundler 缓存
+6. 清理 Bundler 缓存 + 重新安装
+7. 仅重新安装 Bundler 依赖
+8. 完整清理 (Xcode + Pods + Bundler)
+9. 完整清理 + 重新安装所有依赖
+0. 退出
+
+## 核心执行流程
+
+### 项目检测流程
+1. **工作目录初始化**：解析全局选项或交互式输入
+2. **项目文件探测**：优先查找 .xcworkspace，回退到 .xcodeproj
+3. **Scheme 解析**：使用三阶段策略选择最佳 Scheme
+4. **环境验证**：检查必要的工具和依赖
+
+### 清理执行流程
+1. **Xcode 清理**：关闭 Xcode → 清理 build 目录 → 清理项目 DerivedData → 执行 xcodebuild clean
+2. **CocoaPods 清理**：删除 Pods 目录和 Podfile.lock → 清理 pod 缓存
+3. **Bundler 清理**：删除 vendor/bundle 和 .bundle → 清理 Bundler 缓存
+4. **安装流程**：配置路径 → 安装依赖 → 自动打开 Xcode
 
 ## 关键实现要点
 
-1) 项目探测与 Scheme 获取（修复后）
-- 优先 workspace，其次 project；Scheme 缺失时回退为项目名
-- 三阶段选择规则：
-  1. 优先精确匹配项目名同名的 Scheme（例如项目 xxx -> Scheme xxx）
-  2. 过滤 Tests/UITests/Example/Demo/Sample 等测试或示例类 Scheme
-  3. 仍未命中则回退到第一个可用 Scheme
-- 在 workspace 分支中先查找同名 .xcodeproj 的共享 Schemes，再回退到 workspace 自身的共享 Schemes（更贴合多工程聚合场景）
-- 清理 DerivedData 仅匹配 "<项目名>-*"，避免误删其他项目缓存
+### 1. 模块化架构设计
 
-## 代码解析与实现细节
-
-1) 命令行参数解析与交互主循环
-- 支持命令行直达和交互式两种入口。当没有参数时进入交互菜单，有参数时使用 case 解析选项。
-
+#### 全局选项与子命令解析
 ```bash
-# 无参数进入交互式
-if [[ "$#" -eq 0 ]]; then
-  INTERACTIVE_MODE=true
-  run_interactive_mode
-else
-  # 命令行参数解析
-  while [[ "$#" -gt 0 ]]; do
-    case $1 in
-      -h|--help) show_help; exit 0 ;;
-      -p|--pods) CLEAN_PODS=true ;;
-      -b|--bundle) CLEAN_BUNDLE=true ;;
-      -r|--reinstall) REINSTALL_PODS=true; REINSTALL_BUNDLE=true ;;
-      -i|--install) INSTALL_ONLY_PODS=true ;;
-      -I|--install-bundle) INSTALL_ONLY_BUNDLE=true ;;
-      *) echo -e "${RED}错误: 未知选项 $1${NC}" >&2; show_help; exit 1 ;;
-    esac
-    shift
-  done
-fi
-```
-
-- 交互模式中，先展示菜单，解析选择后按 Enter 执行；设备与模拟器管理为一个独立子菜单。
-
-```bash
-run_interactive_mode() {
-  while true; do
-    show_interactive_menu
-    read -r choice
-    if handle_interactive_choice "$choice"; then
-      echo -e "\n${BLUE}按 Enter 键开始执行...${NC}"
-      read -r
-      break
-    else
-      echo -e "\n${YELLOW}按 Enter 键继续...${NC}"
-      read -r
-    fi
-  done
+parse_global_flags() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -C|--workdir)
+                WORKING_DIR="$2"; shift 2 ;;
+            -y|--yes)
+                ASSUME_YES=true; shift ;;
+            -n|--dry-run)
+                DRY_RUN=true; shift ;;
+            -h|--help)
+                print_usage; exit 0 ;;
+            interactive|xcode-clean|pods-clean|...)
+                SUBCOMMAND="$1"; shift
+                SUBCOMMAND_ARGS=("$@"); break ;;
+            *)
+                SUBCOMMAND="$1"; shift
+                SUBCOMMAND_ARGS=("$@"); break ;;
+        esac
+    done
 }
 ```
 
-2) 项目探测与 Scheme 获取
-- 优先寻找 .xcworkspace，其次 .xcodeproj，并据此获取可用 Schemes；在 workspace 下先尝试同名 .xcodeproj 的共享 Schemes，再回退到 workspace 的共享 Schemes；若最终解析不到则回退为项目名。
-
+#### 子命令封装（单一职责）
 ```bash
-WORKSPACE_FILE=$(find . -maxdepth 1 -name "*.xcworkspace" -print -quit)
-if [ -z "$WORKSPACE_FILE" ]; then
-  PROJECT_FILE=$(find . -maxdepth 1 -name "*.xcodeproj" -print -quit)
-  if [ -z "$PROJECT_FILE" ]; then
-    echo -e "${YELLOW}⚠️ 未找到 .xcworkspace 或 .xcodeproj 文件${NC}"
-  else
-    PROJECT_NAME=$(basename "$PROJECT_FILE" .xcodeproj)
-    USE_PROJECT=true; HAS_XCODE_PROJECT=true
-  fi
-else
-  PROJECT_NAME=$(basename "$WORKSPACE_FILE" .xcworkspace)
-  USE_PROJECT=false; HAS_XCODE_PROJECT=true
-fi
-
-# 使用 xcodebuild -list -json 解析 Schemes，并做三阶段筛选（略，见脚本）
-[ -z "$SCHEME" ] && SCHEME="$PROJECT_NAME"
+cmd_xcode_clean() { detect_xcode_project && get_project_scheme; clean_xcode_build_cache; }
+cmd_pods_clean() { clean_cocoapods; }
+cmd_pods_install() { install_cocoapods; }
+cmd_pods_reinstall() { clean_cocoapods; install_cocoapods; }
+cmd_bundler_clean() { clean_bundler; }
+cmd_bundler_install() { install_bundler; }
+cmd_bundler_reinstall() { clean_bundler; install_bundler; }
+cmd_clean_all() { cmd_xcode_clean; cmd_pods_clean; cmd_bundler_clean; }
+cmd_clean_and_reinstall() { cmd_xcode_clean; cmd_pods_clean; cmd_bundler_clean; cmd_pods_install; cmd_bundler_install; }
 ```
 
-3) Xcode 构建缓存清理
-- 分为 xcodebuild clean、删除本地 build 目录、定向清理 DerivedData 三步，避免误删其他项目缓存。
+### 2. 项目检测与 Scheme 选择
 
+#### 智能项目探测
 ```bash
-# 清理构建
-if [ "$USE_PROJECT" = true ]; then
-  xcodebuild clean -project "$PROJECT_FILE" -scheme "$SCHEME"
-else
-  xcodebuild clean -workspace "$WORKSPACE_FILE" -scheme "$SCHEME"
-fi
-
-# 删除 build 目录
-rm -rf ./build
-
-# 清理当前项目相关 DerivedData
-find ~/Library/Developer/Xcode/DerivedData -name "${PROJECT_NAME}-*" -type d -exec rm -rf {} +
+detect_xcode_project() {
+    # 优先查找 .xcworkspace
+    WORKSPACE_FILE=$(find . -maxdepth 1 -name "*.xcworkspace" -print -quit)
+    if [ -n "$WORKSPACE_FILE" ]; then
+        PROJECT_NAME=$(basename "$WORKSPACE_FILE" .xcworkspace)
+        HAS_XCODE_PROJECT=true
+        return 0
+    fi
+    
+    # 回退到 .xcodeproj
+    PROJECT_FILE=$(find . -maxdepth 1 -name "*.xcodeproj" -print -quit)
+    if [ -n "$PROJECT_FILE" ]; then
+        PROJECT_NAME=$(basename "$PROJECT_FILE" .xcodeproj)
+        HAS_XCODE_PROJECT=true
+        return 0
+    fi
+    
+    return 1
+}
 ```
 
-4) CocoaPods 清理与重装流程
-- 先删除 Pods 与 Podfile.lock，再根据是否使用 Bundler 选择安装路径；同时尝试清理 `pod cache`。
-
+#### 三阶段 Scheme 选择策略
 ```bash
-# 删除 Pods 与锁文件
-rm -rf Pods Podfile.lock
-
-# 清理 CocoaPods 缓存（可选）
-if command -v bundle >/dev/null 2>&1; then
-  bundle exec pod cache clean --all 2>/dev/null || pod cache clean --all 2>/dev/null
-else
-  pod cache clean --all 2>/dev/null || true
-fi
-
-# 重新安装（带 Bundler）
-if command -v bundle >/dev/null 2>&1; then
-  [ "$CLEAN_BUNDLE" = true ] && bundle config set --local path 'vendor/bundle'
-  bundle install && bundle exec pod install --clean-install
-else
-  pod install --clean-install
-fi
+select_preferred_scheme() {
+    local schemes="$1"
+    
+    # 1. 精确匹配项目名
+    local preferred=$(echo "$schemes" | awk -v name="$PROJECT_NAME" '$0==name{print;exit}')
+    if [ -n "$preferred" ]; then
+        echo "$preferred"
+        return
+    fi
+    
+    # 2. 排除测试和示例
+    preferred=$(echo "$schemes" | grep -viE '(tests$|uitests$|ui tests$|example$|demo$|sample$)' | head -n 1)
+    if [ -n "$preferred" ]; then
+        echo "$preferred"
+        return
+    fi
+    
+    # 3. 第一个可用的
+    echo "$schemes" | head -n 1
+}
 ```
 
-5) Bundler 清理与重装
-- 清理 vendor/bundle 与 .bundle；`bundle clean --force` 清理缓存；重装前确保本地 path 指向 vendor/bundle。仅安装 Pods 时若 .bundle/config 缺失，也会临时写入 path。
+### 3. 安全执行机制
 
+#### 命令执行封装
 ```bash
-# 清理 Bundler 产物
-rm -rf vendor/bundle .bundle
-
-# 清理 Bundler 缓存
-if command -v bundle >/dev/null 2>&1; then
-  bundle clean --force 2>/dev/null || true
-fi
-
-# 重新安装并恢复路径
-if command -v bundle >/dev/null 2>&1; then
-  bundle config set --local path 'vendor/bundle'
-  bundle install
-fi
+safe_execute() {
+    local cmd="$1"
+    local description="$2"
+    local silent="${3:-false}"
+    
+    if [ "$DRY_RUN" = true ]; then
+        print_info "DRY RUN: $cmd"
+        return 0
+    fi
+    
+    if [ "$silent" = true ]; then
+        eval "$cmd" >/dev/null 2>&1
+    else
+        print_progress "$description"
+        eval "$cmd"
+    fi
+    
+    return $?
+}
 ```
 
-6) 模拟器信息与空间占用
-- 使用 `simctl list devices --json` 拉取所有模拟器，再结合本地目录体积评估空间占用，日志中显示数量与总占用。
-
+#### 项目特定 DerivedData 清理
 ```bash
-# 获取 json 并统计空间占用（实现细节见脚本）
+clean_project_derived_data() {
+    local derived_data_dir="$HOME/Library/Developer/Xcode/DerivedData"
+    
+    # 仅清理项目相关的目录
+    local project_dirs=$(find "$derived_data_dir" -maxdepth 1 -type d -name "${PROJECT_NAME}-*" 2>/dev/null)
+    
+    # 计算总大小并显示
+    local total_size=0
+    local dir_count=0
+    while IFS= read -r dir; do
+        if [ -d "$dir" ]; then
+            local size=$(du -sk "$dir" 2>/dev/null | cut -f1)
+            total_size=$((total_size + size))
+            dir_count=$((dir_count + 1))
+        fi
+    done <<< "$project_dirs"
+    
+    # 安全删除
+    while IFS= read -r dir; do
+        if [ -d "$dir" ]; then
+            safe_execute "rm -rf '$dir'" "删除 $(basename "$dir")" true
+        fi
+    done <<< "$project_dirs"
+}
 ```
 
-- 建议：一次性解析 JSON 并映射到目录，减少多次 `du -sh` 调用的开销。
+### 4. CocoaPods 管理实现
 
-7) Archives 与 DeviceSupport 清理
-- 提示风险并二次确认后删除；统计数量和总占用给出直观反馈。
-
+#### 清理功能
 ```bash
-archives_dir="$HOME/Library/Developer/Xcode/Archives"
-archive_count=$(find "$archives_dir" -name "*.xcarchive" | wc -l | tr -d ' ')
-# 确认后删除
-rm -rf "$archives_dir"/*
+clean_cocoapods() {
+    if [ ! -f "Podfile" ]; then
+        print_warning "未找到Podfile，跳过CocoaPods清理"
+        return 0
+    fi
+    
+    print_progress "清理CocoaPods..."
+    close_xcode_if_running
+    
+    # 删除Pods目录和Podfile.lock
+    safe_execute "rm -rf Pods Podfile.lock" "删除Pods目录和Podfile.lock" true
+    
+    # 清理CocoaPods缓存
+    if command_exists bundle; then
+        safe_execute "bundle exec pod cache clean --all" "清理CocoaPods缓存" true
+    else
+        safe_execute "pod cache clean --all" "清理CocoaPods缓存" true
+    fi
+    
+    print_success "CocoaPods清理完成"
+}
 ```
 
-8) 任务收尾与摘要
-- 清理完成后关闭 Xcode，最后打印各步骤的成功/失败摘要，便于快速排查。
-
+#### 安装功能
 ```bash
-osascript -e 'tell application "Xcode" to quit' 2>/dev/null || true
-
-echo -e "${BLUE}📋 清理摘要:${NC}"
-# 按选项与结果变量输出 ...
+install_cocoapods() {
+    if [ ! -f "Podfile" ]; then
+        print_error_and_exit "未找到Podfile，无法安装CocoaPods依赖"
+    fi
+    
+    print_progress "安装CocoaPods依赖..."
+    close_xcode_if_running
+    
+    # 确保Bundler配置正确
+    if command_exists bundle && [ ! -f ".bundle/config" ]; then
+        safe_execute "bundle config set --local path 'vendor/bundle'" "配置Bundler路径" true
+    fi
+    
+    # 安装依赖
+    if command_exists bundle; then
+        safe_execute "bundle install" "安装Bundler依赖"
+        if [ $? -eq 0 ]; then
+            safe_execute "bundle exec pod install --clean-install" "安装CocoaPods依赖"
+        else
+            print_error_and_exit "bundle install 失败"
+        fi
+    else
+        safe_execute "pod install --clean-install" "安装CocoaPods依赖"
+    fi
+    
+    if [ $? -eq 0 ]; then
+        print_success "CocoaPods依赖安装完成"
+        # 自动打开 Xcode
+        detect_xcode_project && get_project_scheme
+        open_primary_in_xcode
+    else
+        print_error_and_exit "CocoaPods依赖安装失败"
+    fi
+}
 ```
 
-## 修复后的关键改动（What’s new）
+### 5. Bundler 管理实现
 
-- Scheme 选择更智能：精确匹配项目名 > 过滤测试/示例 Scheme > 回退第一个可用；并在 workspace 中优先读取同名 .xcodeproj 的共享 Schemes
-- 日志更可验证：明确打印「使用共享的 Scheme: <名称>」与「最终 -scheme 传参」
-- Bundler 行为更安全：仅在需要时写入/重建 .bundle/config，且 path 始终固定为 vendor/bundle
-- Pods 安装更稳健：在 Bundler 存在时一律 bundle exec；仅安装 Pods 且缺少 .bundle/config 时会做一次性路径配置
-- 模拟器信息展示修复：解析 JSON、统一大小统计，避免文本解析误差
-- 失败兜底提示更友好：网络/权限/环境问题时给出可操作建议
+#### 清理与安装
+```bash
+clean_bundler() {
+    if [ ! -f "Gemfile" ]; then
+        print_warning "未找到Gemfile，跳过Bundler清理"
+        return 0
+    fi
+    
+    print_progress "清理Bundler..."
+    close_xcode_if_running
+    
+    # 删除vendor/bundle和.bundle目录
+    safe_execute "rm -rf vendor/bundle" "删除Bundler目录" true
+    
+    # 清理Bundler缓存
+    if command_exists bundle; then
+        safe_execute "bundle clean --force" "清理Bundler缓存" true
+    fi
+    
+    print_success "Bundler清理完成"
+}
 
-## 环境与兼容性（Ruby/CocoaPods/Xcode）
+install_bundler() {
+    if [ ! -f "Gemfile" ]; then
+        print_error_and_exit "未找到Gemfile，无法安装Bundler依赖"
+    fi
+    
+    if ! command_exists bundle; then
+        print_error_and_exit "未安装Bundler，请先安装: gem install bundler"
+    fi
+    
+    print_progress "安装Bundler依赖..."
+    close_xcode_if_running
+    
+    # 配置Bundler路径
+    safe_execute "bundle config set --local path 'vendor/bundle'" "配置Bundler路径" true
+    
+    # 安装依赖
+    safe_execute "bundle install" "安装Bundler依赖"
+    
+    if [ $? -eq 0 ]; then
+        print_success "Bundler依赖安装完成"
+        # 若项目存在，自动打开
+        detect_xcode_project && get_project_scheme
+        open_primary_in_xcode
+    else
+        print_error_and_exit "Bundler依赖安装失败"
+    fi
+}
+```
 
-- 推荐使用 rbenv 安装 Ruby 3.3.x 或 3.4.x，并在项目根目录设置 .ruby-version 统一团队环境
-- 如果遇到 `pod install` 期间 Ruby 扩展崩溃（例如 digest/sha2.bundle 相关），多半是老 Ruby 与新系统 ABI 不兼容，解决思路：
-  1. 安装新 Ruby：rbenv install 3.4.3 && rbenv local 3.4.3 && rbenv rehash
-  2. 更新 gem 与 bundler：gem update --system && gem install bundler
-  3. 清理并重装依赖：rm -rf vendor/bundle .bundle && bundle config set --local path 'vendor/bundle' && bundle install
-  4. 重新安装 Pods：bundle exec pod install --clean-install（或直接 pod install）
-- 确认 Xcode 命令行工具已选择到当前 Xcode（xcode-select -p）
+### 6. 交互式界面实现
 
-## 验证清单（你可以这样自检）
+#### 主菜单显示
+```bash
+show_main_menu() {
+    clear
+    print_message "$CYAN" "╔══════════════════════════════════════════════════════════════╗"
+    print_message "$CYAN" "║                    🧹 项目清理工具 (新版本)                  ║"
+    print_message "$CYAN" "╚══════════════════════════════════════════════════════════════╝"
+    echo
+    if [ -n "$WORKING_DIR" ]; then
+        print_message "$GRAY" "当前工作目录: $WORKING_DIR"
+        echo
+    fi
+    print_message "$YELLOW" "请选择要执行的操作:"
+    echo
+    print_message "$GREEN" "📱 Xcode 相关操作:"
+    print_message "$BLUE" "  1) 清理 Xcode 缓存 (DerivedData, Build目录)"
+    echo
+    print_message "$GREEN" "🔗 CocoaPods 相关操作:"
+    print_message "$BLUE" "  2) 清理 Pods 目录"
+    print_message "$BLUE" "  3) 清理 Pods 目录 + 重新安装"
+    print_message "$BLUE" "  4) 仅重新安装 Pods 依赖"
+    echo
+    print_message "$GREEN" "💎 Bundler 相关操作:"
+    print_message "$BLUE" "  5) 清理 Bundler 缓存"
+    print_message "$BLUE" "  6) 清理 Bundler 缓存 + 重新安装"
+    print_message "$BLUE" "  7) 仅重新安装 Bundler 依赖"
+    echo
+    print_message "$GREEN" "🔄 组合操作:"
+    print_message "$BLUE" "  8) 完整清理 (Xcode + Pods + Bundler)"
+    print_message "$BLUE" "  9) 完整清理 + 重新安装所有依赖"
+    echo
+    print_message "$RED" "  0) 退出"
+    echo
+    echo -n "请输入选项 (0-9): "
+}
+```
 
-- Scheme 选择：脚本输出应包含「使用共享的 Scheme: xxx」或与你项目名一致的 Scheme；xcodebuild 命令行中应看到 `-scheme "xxx"`
-- Bundler 路径：执行 `bundle config get path`，应显示 `vendor/bundle`；若你仅安装 Pods 且之前没有 .bundle/config，安装后应能看到该路径被写入
-- Pods 安装：`pod install --clean-install` 或 `bundle exec pod install --clean-install` 能顺利完成，无 Ruby 扩展崩溃
-- 清理范围：DerivedData 仅清理 `${PROJECT_NAME}-*` 前缀目录，避免误删其他项目
+#### 用户选择处理
+```bash
+handle_user_choice() {
+    local choice=$1
+    detect_xcode_project && get_project_scheme
+    case $choice in
+        1) clean_xcode_build_cache ;;
+        2) clean_cocoapods ;;
+        3) clean_cocoapods; install_cocoapods ;;
+        4) install_cocoapods ;;
+        5) clean_bundler ;;
+        6) clean_bundler; install_bundler ;;
+        7) install_bundler ;;
+        8) clean_xcode_build_cache; clean_cocoapods; clean_bundler ;;
+        9) clean_xcode_build_cache; clean_cocoapods; clean_bundler; install_bundler; install_cocoapods ;;
+        0) print_info "退出程序"; exit 0 ;;
+        *) print_error_and_exit "无效选项，请重新选择" ;;
+    esac
+    return 0
+}
+```
 
-## 实战建议
+## 架构优势与改进
 
-- 建议在执行前手动关闭 Xcode（脚本也会在清理结束时尝试关闭）
-- Archives 中如有发布用构建，删除前做好备份；DeviceSupport 删除后，首次连机会重新下载
-- 网络不稳定时，重装 Pods/Bundler 失败较常见，可重试或切换镜像源
+### 模块化设计优势
+- **单一职责**：每个子命令专注一个功能，便于维护和测试
+- **组合灵活**：支持全局选项与子命令的自由组合
+- **扩展性强**：新增功能只需添加新的子命令和对应函数
+- **代码复用**：核心功能模块可在不同子命令间复用
 
-## 已实现的改进
+### 用户体验改进
+- **命令行友好**：支持 `--dry-run` 预览操作，`--yes` 自动确认
+- **工作目录灵活**：支持 `--workdir` 指定任意项目目录
+- **错误处理完善**：每个步骤都有详细的错误提示和解决建议
+- **自动恢复**：安装完成后自动打开 Xcode 项目
 
-1) Scheme 解析与包含空格的 Scheme 名
-- 已改进：使用 `xcodebuild -list -json` 结合 Python 解析 JSON，正确获取包含空格的 Scheme 名称
-- 增加了错误处理，确保解析失败时能回退到默认 Scheme
+### 安全性提升
+- **项目隔离**：仅清理当前项目相关的 DerivedData
+- **操作可逆**：提供 `--dry-run` 模式预览所有操作
+- **依赖检测**：安装前检查必要的工具和文件
+- **路径管理**：统一使用 vendor/bundle 作为本地安装路径
 
-2) 交互式删除模拟器的设备名解析
-- 已改进：使用 `xcrun simctl list devices --json` 结合 Python 解析 JSON，准确获取设备名称
-- 不再依赖文本解析，提高了稳定性和准确性
+## 环境与兼容性
 
-3) 交互模式从「设备与模拟器管理」返回后的流程
-- 已修复：从设备管理菜单返回时，现在会重新显示主菜单，而不是直接进入清理阶段
-- 优化了用户体验，避免了无意中执行清理操作
+### Ruby 环境要求
+- **推荐版本**：Ruby 3.3.x 或 3.4.x
+- **版本管理**：建议使用 rbenv 管理 Ruby 版本
+- **项目配置**：在项目根目录设置 `.ruby-version` 统一团队环境
 
-4) 模拟器信息与空间占用
-- 已优化：一次性获取所有模拟器目录大小，结合 JSON 解析，减少了多次 `du -sh` 调用
-- 提高了性能和准确性
+### 常见问题解决
+1. **Ruby 扩展崩溃**：通常是老 Ruby 与新系统 ABI 不兼容
+   ```bash
+   # 解决方案
+   rbenv install 3.4.3 && rbenv local 3.4.3 && rbenv rehash
+   gem update --system && gem install bundler
+   rm -rf vendor/bundle .bundle
+   bundle config set --local path 'vendor/bundle' && bundle install
+   bundle exec pod install --clean-install
+   ```
+
+2. **Xcode 命令行工具**：确保选择正确的 Xcode 版本
+   ```bash
+   xcode-select -p  # 检查当前选择的 Xcode
+   sudo xcode-select -s /Applications/Xcode.app/Contents/Developer  # 切换
+   ```
+
+## 使用建议
+
+### 日常开发流程
+1. **项目初始化**：`./clean_pod.sh --workdir ~/Projects/MyApp interactive`
+2. **快速清理**：`./clean_pod.sh xcode-clean`
+3. **依赖重装**：`./clean_pod.sh clean-and-reinstall`
+4. **预览操作**：`./clean_pod.sh --dry-run clean-all`
+
+### 团队协作
+- 统一使用 rbenv 管理 Ruby 版本
+- 在项目根目录添加 `.ruby-version` 文件
+- 使用 `vendor/bundle` 作为本地依赖路径
+- 定期清理 DerivedData 释放磁盘空间
+
+### 故障排除
+- 使用 `--dry-run` 模式预览操作
+- 检查 Ruby 版本和 Xcode 命令行工具
+- 确保网络连接稳定（依赖安装需要网络）
+- 查看脚本输出的详细错误信息
