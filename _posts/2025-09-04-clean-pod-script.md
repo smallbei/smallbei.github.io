@@ -487,29 +487,6 @@ handle_user_choice() {
 - **依赖检测**：安装前检查必要的工具和文件
 - **路径管理**：统一使用 vendor/bundle 作为本地安装路径
 
-## 环境与兼容性
-
-### Ruby 环境要求
-- **推荐版本**：Ruby 3.3.x 或 3.4.x
-- **版本管理**：建议使用 rbenv 管理 Ruby 版本
-- **项目配置**：在项目根目录设置 `.ruby-version` 统一团队环境
-
-### 常见问题解决
-1. **Ruby 扩展崩溃**：通常是老 Ruby 与新系统 ABI 不兼容
-   ```bash
-   # 解决方案
-   rbenv install 3.4.3 && rbenv local 3.4.3 && rbenv rehash
-   gem update --system && gem install bundler
-   rm -rf vendor/bundle .bundle
-   bundle config set --local path 'vendor/bundle' && bundle install
-   bundle exec pod install --clean-install
-   ```
-
-2. **Xcode 命令行工具**：确保选择正确的 Xcode 版本
-   ```bash
-   xcode-select -p  # 检查当前选择的 Xcode
-   sudo xcode-select -s /Applications/Xcode.app/Contents/Developer  # 切换
-   ```
 
 ## 使用建议
 
@@ -518,15 +495,3 @@ handle_user_choice() {
 2. **快速清理**：`./clean_pod.sh xcode-clean`
 3. **依赖重装**：`./clean_pod.sh clean-and-reinstall`
 4. **预览操作**：`./clean_pod.sh --dry-run clean-all`
-
-### 团队协作
-- 统一使用 rbenv 管理 Ruby 版本
-- 在项目根目录添加 `.ruby-version` 文件
-- 使用 `vendor/bundle` 作为本地依赖路径
-- 定期清理 DerivedData 释放磁盘空间
-
-### 故障排除
-- 使用 `--dry-run` 模式预览操作
-- 检查 Ruby 版本和 Xcode 命令行工具
-- 确保网络连接稳定（依赖安装需要网络）
-- 查看脚本输出的详细错误信息
